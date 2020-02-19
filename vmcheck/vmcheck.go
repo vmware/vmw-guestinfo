@@ -20,51 +20,49 @@ import (
 	"github.com/vmware/vmw-guestinfo/bdoor"
 )
 
+type platform struct {
+	cpuid       func(uint32, uint32) (uint32, uint32, uint32, uint32)
+	accessPorts func() error
+	knock       func() (bool, error)
+}
+
+var defaultPlatform = &platform{
+	cpuid:       cpuid_low,
+	accessPorts: openPortsAccess,
+	knock:       bdoorKnock,
+}
+
 // From https://github.com/intel-go/cpuid/blob/master/cpuidlow_amd64.s
 // Get the CPU ID low level leaf values.
 func cpuid_low(arg1, arg2 uint32) (eax, ebx, ecx, edx uint32)
 
-// IsVirtualWorld returns true if running in a VM and the backdoor is available.
-func IsVirtualWorld() (bool, error) {
-	// Test the HV bit is set
-	if !IsVirtualCPU() {
-		return false, nil
-	}
+func bdoorKnock() (bool, error) {
+	bp := &bdoor.BackdoorProto{}
 
-	// Test if backdoor port is available.
-	return hypervisorPortCheck()
-}
-
-// hypervisorPortCheck tests the availability of the HV port.
-func hypervisorPortCheck() (bool, error) {
-	// Privilege level 3 to access all ports above 0x3ff
-	if err := openPortsAccess(); err != nil {
-		return false, err
-	}
-
-	p := &bdoor.BackdoorProto{}
-
-	p.CX.AsUInt32().SetWord(bdoor.CommandGetVersion)
-	out := p.InOut()
+	bp.CX.AsUInt32().SetWord(bdoor.CommandGetVersion)
+	out := bp.InOut()
 	// if there is no device, we get back all 1s
 	return (0xffffffff != out.AX.AsUInt32().Word()) && (0 != out.AX.AsUInt32().Word()), nil
 }
 
-// IsVirtualCPU checks if the cpu is a virtual CPU running on ESX.  It checks for
-// the HV bit in the ECX register of the CPUID leaf 0x1.  Intel and AMD CPUs
-// reserve this bit to indicate if the CPU is running in a HV. See
-// https://en.wikipedia.org/wiki/CPUID#EAX.3D1:_Processor_Info_and_Feature_Bits
-// for details.  If this bit is set, the reserved cpuid levels are used to pass
-// information from the HV to the guest.  In ESX, this is the repeating string
-// "VMwareVMware".
-func IsVirtualCPU() bool {
+func (p *platform) isVirtualWorld() (bool, error) {
+	// Test the HV bit is set
+	if !p.isVirtualCPU() {
+		return false, nil
+	}
+
+	// Test if backdoor port is available.
+	return p.hypervisorPortCheck()
+}
+
+func (p *platform) isVirtualCPU() bool {
 	HV := uint32(1 << 31)
-	_, _, c, _ := cpuid_low(0x1, 0)
+	_, _, c, _ := p.cpuid(0x1, 0)
 	if (c & HV) != HV {
 		return false
 	}
 
-	_, b, c, d := cpuid_low(0x40000000, 0)
+	_, b, c, d := p.cpuid(0x40000000, 0)
 
 	buf := make([]byte, 12)
 	binary.LittleEndian.PutUint32(buf, b)
@@ -76,4 +74,30 @@ func IsVirtualCPU() bool {
 	}
 
 	return true
+}
+
+// hypervisorPortCheck tests the availability of the HV port.
+func (p *platform) hypervisorPortCheck() (bool, error) {
+	// Privilege level 3 to access all ports above 0x3ff
+	if err := p.accessPorts(); err != nil {
+		return false, err
+	}
+
+	return p.knock()
+}
+
+// IsVirtualCPU checks if the cpu is a virtual CPU running on ESX.  It checks for
+// the HV bit in the ECX register of the CPUID leaf 0x1.  Intel and AMD CPUs
+// reserve this bit to indicate if the CPU is running in a HV. See
+// https://en.wikipedia.org/wiki/CPUID#EAX.3D1:_Processor_Info_and_Feature_Bits
+// for details.  If this bit is set, the reserved cpuid levels are used to pass
+// information from the HV to the guest.  In ESX, this is the repeating string
+// "VMwareVMware".
+func IsVirtualCPU() bool {
+	return defaultPlatform.isVirtualCPU()
+}
+
+// IsVirtualWorld returns true if running in a VM and the backdoor is available.
+func IsVirtualWorld() (bool, error) {
+	return defaultPlatform.isVirtualWorld()
 }
