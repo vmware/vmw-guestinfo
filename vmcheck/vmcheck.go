@@ -24,21 +24,26 @@ import (
 // Get the CPU ID low level leaf values.
 func cpuid_low(arg1, arg2 uint32) (eax, ebx, ecx, edx uint32)
 
-// IsVirtualWorld returns true if running in a VM and the backdoor is available.
-func IsVirtualWorld() (bool, error) {
+// IsVirtualWorld returns `true` if running in a VM and the backdoor is available.
+// It also tries to elevate I/O privileges for the calling thread, which in
+// some cases may be forbidden by the system (e.g Linux in `kernel_lockdown` mode
+// does not allow `iopl` calls); the `ignoreAccessErrors` parameter allows
+// to control library behavior in order to treat such errors as non-fatal.
+func IsVirtualWorld(ignoreAccessErrors bool) (bool, error) {
 	// Test the HV bit is set
 	if !IsVirtualCPU() {
 		return false, nil
 	}
 
 	// Test if backdoor port is available.
-	return hypervisorPortCheck()
+	return hypervisorPortCheck(ignoreAccessErrors)
 }
 
-// hypervisorPortCheck tests the availability of the HV port.
-func hypervisorPortCheck() (bool, error) {
+// hypervisorCheckPort tests the availability of the backdoor port
+// to the hypervisor, opportunistically tweaking I/O access level first.
+func hypervisorPortCheck(ignoreAccessErrors bool) (bool, error) {
 	// Privilege level 3 to access all ports above 0x3ff
-	if err := openPortsAccess(); err != nil {
+	if err := openPortsAccess(); err != nil && !ignoreAccessErrors {
 		return false, err
 	}
 
