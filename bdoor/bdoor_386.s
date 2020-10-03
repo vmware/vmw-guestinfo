@@ -1,3 +1,5 @@
+// +build gc
+
 #include "textflag.h"
 
 // Doc of the golang plan9 assembler

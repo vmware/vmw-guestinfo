@@ -1,3 +1,5 @@
+// +build gc
+
 #include "textflag.h"
 
 // From https://github.com/intel-go/cpuid/blob/master/cpuidlow_amd64.s
